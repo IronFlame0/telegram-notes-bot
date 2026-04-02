@@ -373,6 +373,151 @@ QUERY_TOMORROW = {"что завтра", "завтра", "план на завт
 QUERY_TODAY = {"туду", "сегодня", "дела", "план"}
 QUERY_PROCESS = {"обработать", "запустить", "обнови", "обновить"}
 QUERY_RANDOM = {"рандом", "случайное", "случайная заметка", "random"}
+QUERY_NOTES = {"заметки", "notes", "мои заметки"}
+
+# Category files to exclude from notes browser
+NOTES_EXCLUDE = {"recurring"}
+
+CATEGORY_ICONS = {
+    "health":   "💊",
+    "shopping": "🛒",
+    "workout":  "🏋️",
+    "ideas":    "💡",
+    "tasks":    "✅",
+    "books":    "📚",
+    "finance":  "💰",
+}
+
+
+# ---------------------------------------------------------------------------
+# Notes browser helpers
+# ---------------------------------------------------------------------------
+
+NOTE_ENTRY_RE = re.compile(r"^\s*-\s+\*\*(.+?)\*\*\s*(?:—\s*(.+))?$")
+
+
+def parse_note_entries(fpath: str) -> list[dict]:
+    """Parse **bold** entries from a category note file."""
+    entries = []
+    current_section = ""
+    with open(fpath, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        if stripped.startswith("## ") or stripped.startswith("# "):
+            current_section = stripped.lstrip("#").strip()
+            i += 1
+            continue
+
+        m = NOTE_ENTRY_RE.match(stripped)
+        if m:
+            name = m.group(1).strip()
+            desc = (m.group(2) or "").strip()
+            # Grab following comment lines (>)
+            comments = []
+            j = i + 1
+            while j < len(lines) and lines[j].strip().startswith(">"):
+                comments.append(lines[j].strip().lstrip(">").strip())
+                j += 1
+            body = desc
+            if comments:
+                body = (body + "\n\n" + "\n".join(comments)).strip()
+            entries.append({
+                "name": name,
+                "body": body,
+                "section": current_section,
+            })
+            i = j
+            continue
+
+        i += 1
+    return entries
+
+
+def get_note_categories() -> list[tuple[str, str]]:
+    """Return [(filename_stem, display_label), ...] sorted."""
+    cats = []
+    for fname in sorted(os.listdir(NOTES_DIR)):
+        if not fname.endswith(".md"):
+            continue
+        stem = fname[:-3]
+        if stem in NOTES_EXCLUDE:
+            continue
+        fpath = os.path.join(NOTES_DIR, fname)
+        if not os.path.isfile(fpath):
+            continue
+        if not parse_note_entries(fpath):
+            continue  # skip empty / no bold entries
+        icon = CATEGORY_ICONS.get(stem, "📝")
+        cats.append((stem, f"{icon} {stem.capitalize()}"))
+    return cats
+
+
+def build_notes_categories_keyboard() -> InlineKeyboardMarkup:
+    keyboard = []
+    for stem, label in get_note_categories():
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"ncat:{stem}")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_notes_entries_keyboard(stem: str) -> InlineKeyboardMarkup:
+    fpath = os.path.join(NOTES_DIR, f"{stem}.md")
+    entries = parse_note_entries(fpath)
+    keyboard = []
+    for idx, entry in enumerate(entries):
+        keyboard.append([InlineKeyboardButton(
+            entry["name"],
+            callback_data=f"nent:{stem}:{idx}",
+        )])
+    keyboard.append([InlineKeyboardButton("← Назад", callback_data="nback")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def send_notes_categories(target, edit_message=None) -> None:
+    text = "📒 Заметки — выбери категорию:"
+    keyboard = build_notes_categories_keyboard()
+    await _send(edit_message, target, text, keyboard)
+
+
+async def handle_notes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    # ── nback ── back to categories
+    if data == "nback":
+        await send_notes_categories(None, edit_message=query.message)
+        return
+
+    # ── ncat:STEM ── show entries list
+    if data.startswith("ncat:"):
+        stem = data.split(":", 1)[1]
+        icon = CATEGORY_ICONS.get(stem, "📝")
+        text = f"{icon} {stem.capitalize()} — выбери заметку:"
+        keyboard = build_notes_entries_keyboard(stem)
+        await _send(query.message, None, text, keyboard)
+        return
+
+    # ── nent:STEM:IDX ── show entry content
+    if data.startswith("nent:"):
+        _, stem, idx_str = data.split(":")
+        fpath = os.path.join(NOTES_DIR, f"{stem}.md")
+        entries = parse_note_entries(fpath)
+        entry = entries[int(idx_str)]
+        text = f"*{entry['name']}*"
+        if entry["section"]:
+            text += f"\n_{entry['section']}_"
+        if entry["body"]:
+            text += f"\n\n{entry['body']}"
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("← К списку", callback_data=f"ncat:{stem}"),
+            InlineKeyboardButton("← К разделам", callback_data="nback"),
+        ]])
+        await _send(query.message, None, text, keyboard)
+        return
 
 
 async def _send(edit_message, reply_target, text: str, keyboard) -> None:
@@ -442,6 +587,10 @@ async def handle_todo_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         keyboard = build_section_keyboard(tasks, date, sec_idx)
         await _send(query.message, None, text, keyboard)
         return
+
+
+async def cmd_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_notes_categories(update.message)
 
 
 async def cmd_todo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -516,6 +665,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     normalized = text.strip().lower()
 
+    if normalized in QUERY_NOTES:
+        await send_notes_categories(update.message)
+        return
+
     if normalized in QUERY_RANDOM:
         await handle_random(update, context)
         return
@@ -557,9 +710,11 @@ async def main() -> None:
         raise RuntimeError("TELEGRAM_TOKEN не задан в .env")
 
     app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("notes", cmd_notes))
     app.add_handler(CommandHandler("todo", cmd_todo))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
     app.add_handler(CommandHandler("process", cmd_process))
+    app.add_handler(CallbackQueryHandler(handle_notes_callback, pattern=r"^(ncat|nent|nback)"))
     app.add_handler(CallbackQueryHandler(handle_todo_callback, pattern=r"^(todo|sec|back):"))
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, handle_message))
 
@@ -572,6 +727,7 @@ async def main() -> None:
     await app.bot.set_my_commands([
         ("todo",     "📋 План на сегодня"),
         ("tomorrow", "📅 План на завтра"),
+        ("notes",    "📒 Просмотр заметок"),
         ("process",  "⚙️ Обработать входящие"),
     ])
 
