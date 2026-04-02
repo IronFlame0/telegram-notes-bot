@@ -1,69 +1,69 @@
 # Telegram → Notes (Claude-powered)
 
-## Что это
+## What is this
 
-Python-сервер с Telegram-ботом для ведения личных заметок и планирования.
-Сообщения из Telegram автоматически сортируются по категориям и записываются в Markdown-файлы (Obsidian vault).
-Claude запускается по расписанию внутри бота, обрабатывает inbox и создаёт дневной план.
+A Python server with a Telegram bot for personal note-taking and daily planning.
+Messages from Telegram are automatically categorized and saved into Markdown files (Obsidian vault).
+Claude runs on a schedule inside the server, processes the inbox, and creates daily plans.
 
 ---
 
-## Структура проекта
+## Project structure
 
 ```
 telegramObsidian/
-  main.py                # запускает bot + processor вместе
-  bot.py                 # Telegram UI, команды, сохранение в inbox
-  processor.py           # Claude, git, шедулер, HTTP API (:8080)
-  shared.py              # общие хелперы (inbox, todo UI, notes UI)
-  PROCESS_TASK.md        # промпт для Claude: как обрабатывать inbox и создавать планы
-  CLAUDE.md              # этот файл
-  inbox.json             # буфер входящих сообщений (не коммитить)
-  requirements.txt       # зависимости Python
-  .env                   # секреты (не коммитить)
-  .env.example           # шаблон переменных окружения
+  main.py                # starts bot + processor together
+  bot.py                 # Telegram UI, commands, saves messages to inbox
+  processor.py           # Claude, git sync, scheduler, HTTP API (:8080)
+  shared.py              # shared helpers (inbox, todo UI, notes browser)
+  PROCESS_TASK.md        # Claude prompt: how to process inbox and create plans
+  CLAUDE.md              # this file
+  inbox.json             # incoming messages buffer (do not commit)
+  requirements.txt       # Python dependencies
+  .env                   # secrets (do not commit)
+  .env.example           # environment variables template
   .gitignore
 
-  notes/                 # отдельный git-репозиторий (Obsidian vault)
-    health.md            # здоровье, добавки, схемы приёма
-    workout.md           # тренировки
-    shopping.md          # активный список покупок
-    tasks.md             # задачи и проекты
-    ideas.md             # идеи
-    finance.md           # финансы (если появятся)
-    books.md             # книги (если появятся)
-    recurring.md         # повторяющиеся задачи (шаблон для планов)
-    daily/               # дневные планы
+  notes/                 # separate git repository (Obsidian vault)
+    health.md            # health, supplements, intake schedules
+    workout.md           # workouts
+    shopping.md          # active shopping list
+    tasks.md             # tasks and projects
+    ideas.md             # ideas
+    finance.md           # finances (if needed)
+    books.md             # books (if needed)
+    recurring.md         # recurring tasks (template for daily plans)
+    daily/               # daily plans
       YYYY-MM-DD.md
 ```
 
 ---
 
-## Как работает
+## How it works
 
-### При старте `bot.py`:
-1. Поднимает Telegram-бота
-2. Ждёт `STARTUP_DRAIN_SECONDS` (по умолчанию 5 сек) — Telegram доставляет накопленные сообщения
-3. `git pull` заметок из удалённого репозитория
-4. Запускает Claude (`PROCESS_TASK.md`) — обрабатывает всё накопленное в inbox
-5. Стартует APScheduler — ежедневно в `SCHEDULE_HOUR:SCHEDULE_MINUTE` (по умолчанию 9:00)
+### On `bot.py` startup:
+1. Starts the Telegram bot
+2. Waits `STARTUP_DRAIN_SECONDS` (default 5s) — Telegram delivers pending messages
+3. `git pull` notes from remote repository
+4. Triggers processor → Claude runs (`PROCESS_TASK.md`) — processes everything in inbox
+5. APScheduler runs daily at `SCHEDULE_HOUR:SCHEDULE_MINUTE` (default 9:00)
 
-### При каждом запуске Claude:
-1. Читает `inbox.json`, обрабатывает новые сообщения → пишет в `notes/<category>.md`
-2. Обновляет сегодняшний план (`notes/daily/<TODAY>.md`) — добавляет задачи "на сегодня"
-3. Создаёт/обновляет завтрашний план (`notes/daily/<TOMORROW>.md`) с recurring-задачами
-4. Очищает `inbox.json`
-5. `git commit + push` заметок
+### On each Claude run:
+1. Reads `inbox.json`, processes new messages → writes to `notes/<category>.md`
+2. Updates today's plan (`notes/daily/<TODAY>.md`) — adds tasks marked "today"
+3. Creates/updates tomorrow's plan (`notes/daily/<TOMORROW>.md`) with recurring tasks
+4. Clears processed entries from `inbox.json`
+5. `git commit + push` notes
 
 ---
 
-## Формат inbox.json
+## inbox.json format
 
 ```json
 [
   {
     "id": "uuid",
-    "text": "текст сообщения",
+    "text": "message text",
     "timestamp": "2026-04-02T09:00:00",
     "processed": false
   }
@@ -72,18 +72,18 @@ telegramObsidian/
 
 ---
 
-## Формат заметки в notes/*.md
+## Note entry format in notes/*.md
 
 ```markdown
 ## 2026-04-02
 
-- **Название** — краткое описание
-  > Полезный контекст (дозировка, детали, ссылки)
+- **Title** — short description
+  > Useful context (dosage, details, links)
 ```
 
 ---
 
-## Формат дневного плана notes/daily/YYYY-MM-DD.md
+## Daily plan format notes/daily/YYYY-MM-DD.md
 
 ```markdown
 # План на YYYY-MM-DD
@@ -106,26 +106,28 @@ telegramObsidian/
 - Дедлайн или событие
 ```
 
-Типы чекбоксов:
-- `- [ ]` / `- [x]` — обычная задача
-- `- [N/M]` — прогресс-задача (нажатие увеличивает счётчик, на M сбрасывается в 0)
+Checkbox types:
+- `- [ ]` / `- [x]` — regular task
+- `- [N/M]` — progress task (tap increments counter, resets to 0 at M)
+
+Plans are written in Russian (user language).
 
 ---
 
-## Команды бота
+## Bot commands
 
-| Команда / слово | Действие |
-|----------------|----------|
-| `/todo`, `туду`, `сегодня`, `дела`, `план` | План на сегодня с интерактивными кнопками |
-| `/tomorrow`, `завтра`, `план на завтра` | План на завтра (текст) |
-| `/notes`, `заметки` | Браузер заметок по категориям |
-| `/process`, `обработать`, `запустить` | Запустить обработку inbox прямо сейчас |
-| `рандом`, `random` | Случайная заметка |
-| _любой другой текст_ | Сохранить в inbox |
+| Command / word | Action |
+|----------------|--------|
+| `/todo`, `туду`, `сегодня`, `дела`, `план` | Today's plan with interactive buttons |
+| `/tomorrow`, `завтра`, `план на завтра` | Tomorrow's plan (text) |
+| `/notes`, `заметки` | Notes browser by category |
+| `/process`, `обработать`, `запустить` | Trigger inbox processing now |
+| `рандом`, `random` | Random note |
+| _any other text_ | Save to inbox |
 
 ---
 
-## Переменные окружения (.env)
+## Environment variables (.env)
 
 ```
 TELEGRAM_TOKEN=your_bot_token
@@ -134,42 +136,44 @@ ALLOWED_USER_ID=your_telegram_user_id
 SCHEDULE_HOUR=9
 SCHEDULE_MINUTE=0
 STARTUP_DRAIN_SECONDS=5
+PROCESSOR_URL=http://localhost:8080   # bot → processor address
+PROCESSOR_PORT=8080                   # processor HTTP port
 ```
 
 ---
 
-## Git-репозитории
+## Git repositories
 
-- **Основной проект** (`telegramObsidian/`) — код бота, промпты
+- **Main project** (`telegramObsidian/`) — bot code, prompts
   `git@github.com:IronFlame0/telegram-notes-bot.git`
 
-- **Заметки** (`notes/`) — отдельный репо, Obsidian vault
+- **Notes** (`notes/`) — separate repo, Obsidian vault
   `git@github.com:IronFlame0/obsidian-notes.git`
-  Синхронизируется автоматически: pull при старте, push после каждой обработки.
+  Auto-synced: pull on startup, push after each processing run.
 
 ---
 
-## Запуск
+## Running
 
 ```bash
 cd /Users/vladimirgavrilow/Documents/test/telegramObsidian
 pip install -r requirements.txt
-cp .env.example .env        # заполнить токен и user id
-python main.py              # запустить bot + processor вместе
+cp .env.example .env        # fill in token and user id
+python main.py              # start bot + processor together
 ```
 
-Раздельный запуск (разные серверы):
+Split deployment (separate servers):
 ```bash
-# Сервер 1 — процессор
+# Server 1 — processor
 python processor.py
 
-# Сервер 2 — бот
-PROCESSOR_URL=http://сервер1:8080 python bot.py
+# Server 2 — bot
+PROCESSOR_URL=http://server1:8080 python bot.py
 ```
 
 ---
 
-## Зависимости
+## Dependencies
 
 ```
 python-telegram-bot==21.6
@@ -180,26 +184,26 @@ aiohttp==3.9.5
 
 ---
 
-## Правило для Claude
+## Rule for Claude
 
-**После выполнения каждой задачи — обновить этот файл (`CLAUDE.md`):**
-- Актуализировать структуру проекта если добавились/удалились файлы
-- Обновить раздел "Статус" (отметить выполненное, добавить новое)
-- Обновить "Запуск" и "Зависимости" если изменились
+**After completing any task — update this file (`CLAUDE.md`):**
+- Update project structure if files were added or removed
+- Update the Status section (check off completed items, add new ones)
+- Update Running and Dependencies sections if they changed
 
 ---
 
-## Статус
+## Status
 
 - [x] `bot.py` — Telegram UI
-- [x] `processor.py` — Claude, git, шедулер, HTTP API
-- [x] `shared.py` — общие хелперы
-- [x] `main.py` — совместный запуск одной командой
-- [x] Раздельный запуск на разных серверах (через PROCESSOR_URL)
-- [x] Шедулер (APScheduler) — ежедневная обработка в 9:00
-- [x] Обработка при старте (drain → pull → claude → push)
-- [x] Дневные планы с recurring-задачами
-- [x] Интерактивное туду с кнопками и прогресс-задачами `[N/M]`
-- [x] Браузер заметок по категориям
-- [x] git-синхронизация заметок (pull при старте, push после обработки)
-- [ ] Уведомление когда завтрашний план готов
+- [x] `processor.py` — Claude, git, scheduler, HTTP API
+- [x] `shared.py` — shared helpers
+- [x] `main.py` — single command to run both services together
+- [x] Split deployment on separate servers (via `PROCESSOR_URL`)
+- [x] APScheduler — daily processing at 9:00
+- [x] Startup processing (drain → pull → claude → push)
+- [x] Daily plans with recurring tasks
+- [x] Interactive todo with buttons and progress tasks `[N/M]`
+- [x] Notes browser by category
+- [x] Git sync for notes (pull on startup, push after processing)
+- [ ] Notification when tomorrow's plan is ready
