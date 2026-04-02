@@ -76,7 +76,7 @@ async def call_processor(path: str, data: dict | None = None, method: str = "GET
 
 async def save_to_inbox(entry: dict) -> bool:
     """Send message to processor inbox. Fallback to local file if unreachable."""
-    ok = await call_processor("/inbox", entry)
+    ok = await call_processor("/inbox", entry, method="POST")
     if not ok:
         logger.warning("Processor unreachable — saving to local inbox.json")
         inbox = load_inbox()
@@ -87,7 +87,7 @@ async def save_to_inbox(entry: dict) -> bool:
 
 async def trigger_processing() -> bool:
     """Ask processor to run Claude now."""
-    return await call_processor("/trigger")
+    return await call_processor("/trigger", method="POST")
 
 
 # ---------------------------------------------------------------------------
