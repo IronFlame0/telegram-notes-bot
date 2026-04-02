@@ -58,14 +58,16 @@ logger = logging.getLogger(__name__)
 # Processor communication
 # ---------------------------------------------------------------------------
 
-async def call_processor(path: str, data: dict | None = None) -> bool:
+async def call_processor(path: str, data: dict | None = None, method: str = "GET") -> bool:
     """Call processor HTTP API. Returns True on success."""
     try:
         async with aiohttp.ClientSession() as session:
-            if data is not None:
-                resp = await session.post(f"{PROCESSOR_URL}{path}", json=data, timeout=aiohttp.ClientTimeout(total=5))
+            timeout = aiohttp.ClientTimeout(total=5)
+            url = f"{PROCESSOR_URL}{path}"
+            if method == "POST":
+                resp = await session.post(url, json=data or {}, timeout=timeout)
             else:
-                resp = await session.get(f"{PROCESSOR_URL}{path}", timeout=aiohttp.ClientTimeout(total=5))
+                resp = await session.get(url, timeout=timeout)
             return resp.status == 200
     except aiohttp.ClientError as e:
         logger.error(f"Processor unreachable ({path}): {e}")
