@@ -1,5 +1,5 @@
 """
-Processor service — Claude processing, git sync, scheduler, HTTP API.
+Processor service — Claude/Gemini processing, git sync, scheduler, HTTP API.
 
 HTTP API:
   GET  /health   — health check
@@ -7,13 +7,18 @@ HTTP API:
   POST /inbox    — add message to inbox
 
 Run standalone:
-  python processor.py
+  python processor.py              # use Claude (default)
+  python processor.py --gemini     # use Gemini
 
 Run as part of main.py:
   from processor import run
   await run(startup_process=False)
+
+Feature flag:
+  --gemini CLI arg  OR  USE_GEMINI=true in .env
 """
 
+import argparse
 import asyncio
 import logging
 import os
@@ -39,6 +44,7 @@ ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
 SCHEDULE_HOUR = int(os.getenv("SCHEDULE_HOUR", "9"))
 SCHEDULE_MINUTE = int(os.getenv("SCHEDULE_MINUTE", "0"))
 PROCESSOR_PORT = int(os.getenv("PROCESSOR_PORT", "8080"))
+USE_GEMINI = os.getenv("USE_GEMINI", "false").lower() == "true"
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,6 +180,48 @@ async def run_claude_processing(bot: Bot) -> None:
             await _notify(bot, "❌ Claude превысил таймаут (5 минут).")
 
 
+async def run_gemini_processing(bot: Bot) -> None:
+    async with _processing_lock:
+        items = unprocessed_items()
+        if not items:
+            logger.info("No unprocessed messages — skipping.")
+            await _notify(bot, "📭 Новых сообщений нет.")
+            return
+
+        count = len(items)
+        word = "сообщение" if count == 1 else "сообщения" if count < 5 else "сообщений"
+        await _notify(bot, f"⚙️ [Gemini] Обрабатываю {count} {word}...")
+
+        await asyncio.get_event_loop().run_in_executor(None, git_pull)
+
+        from gemini_processor import run_gemini_processing as _gemini_run
+        success, changed = await _gemini_run()
+
+        if success:
+            err = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: git_push(f"notes: gemini-update {datetime.now().strftime('%Y-%m-%d %H:%M')}"),
+            )
+            if changed:
+                files_list = "\n".join(f"  • {f}" for f in changed)
+                git_status = "\n📤 Запушено в git" if not err else f"\n⚠️ git push: {err}"
+                await _notify(bot, f"✅ [Gemini] Готово. Файлов: {len(changed)}\n{files_list}{git_status}")
+            else:
+                await _notify(bot, "✅ [Gemini] Готово.")
+        else:
+            await _notify(bot, "❌ Gemini обработка завершилась с ошибкой. Проверь логи.")
+
+
+async def run_processing(bot: Bot) -> None:
+    """Dispatcher: choose Claude or Gemini based on USE_GEMINI flag."""
+    if USE_GEMINI:
+        logger.info("Using Gemini processor")
+        await run_gemini_processing(bot)
+    else:
+        logger.info("Using Claude processor")
+        await run_claude_processing(bot)
+
+
 async def _notify(bot: Bot, text: str) -> None:
     try:
         await bot.send_message(chat_id=ALLOWED_USER_ID, text=text)
@@ -191,8 +239,8 @@ async def handle_health(request: web.Request) -> web.Response:
 
 async def handle_trigger(request: web.Request) -> web.Response:
     bot: Bot = request.app["bot"]
-    asyncio.ensure_future(run_claude_processing(bot))
-    return web.json_response({"status": "triggered"})
+    asyncio.ensure_future(run_processing(bot))
+    return web.json_response({"status": "triggered", "engine": "gemini" if USE_GEMINI else "claude"})
 
 
 async def handle_inbox(request: web.Request) -> web.Response:
@@ -230,10 +278,13 @@ async def run(startup_process: bool = True) -> None:
     await site.start()
     logger.info(f"Processor HTTP server started on port {PROCESSOR_PORT}")
 
+    engine = "gemini" if USE_GEMINI else "claude"
+    logger.info(f"Processing engine: {engine.upper()}")
+
     # Scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        lambda: asyncio.ensure_future(run_claude_processing(bot)),
+        lambda: asyncio.ensure_future(run_processing(bot)),
         trigger=CronTrigger(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE),
         id="daily_processing",
         replace_existing=True,
@@ -243,7 +294,7 @@ async def run(startup_process: bool = True) -> None:
 
     # Startup processing (standalone mode)
     if startup_process:
-        await run_claude_processing(bot)
+        await run_processing(bot)
 
     try:
         await asyncio.Event().wait()
@@ -256,6 +307,13 @@ async def run(startup_process: bool = True) -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gemini", action="store_true", help="Use Gemini instead of Claude")
+    args = parser.parse_args()
+
+    if args.gemini:
+        USE_GEMINI = True
+
     try:
         asyncio.run(run(startup_process=True))
     except KeyboardInterrupt:
