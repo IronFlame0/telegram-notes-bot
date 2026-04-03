@@ -16,7 +16,9 @@ telegramObsidian/
   bot.py                 # Telegram UI, commands, saves messages to inbox
   processor.py           # Claude, git sync, scheduler, HTTP API (:8080)
   shared.py              # shared helpers (inbox, todo UI, notes browser)
-  PROCESS_TASK.md        # Claude prompt: how to process inbox and create plans
+  PROCESS_TASK.example.md   # AI prompt template (English, committed to git)
+  PROCESS_TASK.md           # generated prompt in user language (not in git)
+  generate_prompt.py        # generates PROCESS_TASK.md from the template
   CLAUDE.md              # this file
   inbox.json             # incoming messages buffer (do not commit)
   requirements.txt       # Python dependencies
@@ -206,4 +208,5 @@ aiohttp==3.9.5
 - [x] Interactive todo with buttons and progress tasks `[N/M]`
 - [x] Notes browser by category
 - [x] Git sync for notes (pull on startup, push after processing)
+- [x] `PROCESS_TASK.example.md` + `generate_prompt.py` — multilingual prompt generation
 - [ ] Notification when tomorrow's plan is ready

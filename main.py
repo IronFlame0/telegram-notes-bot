@@ -13,10 +13,19 @@ For separate machines:
 import argparse
 import asyncio
 import os
+import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Check that PROCESS_TASK.md exists before starting
+_prompt_file = os.path.join(os.path.dirname(__file__), "PROCESS_TASK.md")
+if not os.path.exists(_prompt_file):
+    print("❌ PROCESS_TASK.md not found.")
+    print("   Run: python generate_prompt.py")
+    print("   (or: python generate_prompt.py --gemini)")
+    sys.exit(1)
 
 # Ensure bot always knows where processor is when running together
 os.environ.setdefault("PROCESSOR_URL", "http://localhost:8080")
