@@ -17,6 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INBOX_FILE = os.path.join(BASE_DIR, "inbox.json")
 NOTES_DIR = os.path.join(BASE_DIR, "notes")
 PROCESS_TASK_FILE = os.path.join(BASE_DIR, "PROCESS_TASK.md")
+CLEANING_FILE = os.path.join(NOTES_DIR, "cleaning.md")
 
 # ---------------------------------------------------------------------------
 # Inbox helpers
@@ -143,6 +144,16 @@ def build_section_text(tasks: list[dict], section_idx: int) -> str:
     return "\n".join(lines)
 
 
+def reset_tasks(file_path: str) -> None:
+    """Reset all checked boxes back to unchecked."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    content = re.sub(r"- \[x\] ", "- [ ] ", content)
+    content = re.sub(r"- \[(\d+)/(\d+)\]", lambda m: f"- [0/{m.group(2)}]", content)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def toggle_task(plan_file: str, line_idx: int) -> None:
     with open(plan_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -160,6 +171,30 @@ def toggle_task(plan_file: str, line_idx: int) -> None:
         lines[line_idx] = line.replace("- [x] ", "- [ ] ", 1)
     with open(plan_file, "w", encoding="utf-8") as f:
         f.writelines(lines)
+
+
+# ---------------------------------------------------------------------------
+# Cleaning checklist helpers
+# ---------------------------------------------------------------------------
+
+def build_cleaning_sections_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
+    sections = get_sections(tasks)
+    rows = [
+        [InlineKeyboardButton(s + section_summary(tasks, s), callback_data=f"csec:{i}")]
+        for i, s in enumerate(sections)
+    ]
+    rows.append([InlineKeyboardButton("🔄 Сбросить", callback_data="creset")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_cleaning_section_keyboard(tasks: list[dict], section_idx: int) -> InlineKeyboardMarkup:
+    section_name = get_sections(tasks)[section_idx]
+    rows = [
+        [InlineKeyboardButton(task_label(t), callback_data=f"ctodo:{t['line_idx']}:{section_idx}")]
+        for t in tasks if t["section"] == section_name
+    ]
+    rows.append([InlineKeyboardButton("← Назад", callback_data="cback")])
+    return InlineKeyboardMarkup(rows)
 
 
 # ---------------------------------------------------------------------------

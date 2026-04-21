@@ -34,11 +34,12 @@ from telegram.ext import (
 )
 
 from shared import (
-    BASE_DIR, INBOX_FILE, NOTES_DIR,
+    BASE_DIR, INBOX_FILE, NOTES_DIR, CLEANING_FILE,
     load_inbox, save_inbox,
     CATEGORY_ICONS,
-    parse_tasks, build_sections_keyboard, build_section_keyboard,
-    build_todo_text, build_section_text, toggle_task,
+    parse_tasks, get_sections, build_sections_keyboard, build_section_keyboard,
+    build_todo_text, build_section_text, toggle_task, reset_tasks,
+    build_cleaning_sections_keyboard, build_cleaning_section_keyboard,
     build_notes_categories_keyboard, build_notes_entries_keyboard,
     parse_note_entries,
 )
@@ -145,6 +146,17 @@ async def send_notes_categories(target, edit_message=None) -> None:
     await _send(edit_message, target, "📒 Заметки — выбери категорию:", build_notes_categories_keyboard())
 
 
+async def send_cleaning(target, edit_message=None) -> None:
+    if not os.path.exists(CLEANING_FILE):
+        await _send(edit_message, target, "📭 Список уборки не найден.", None)
+        return
+    tasks = parse_tasks(CLEANING_FILE)
+    done = sum(1 for t in tasks if t["done"])
+    total = len(tasks)
+    text = f"🧹 Уборка — {done}/{total}"
+    await _send(edit_message, target, text, build_cleaning_sections_keyboard(tasks))
+
+
 # ---------------------------------------------------------------------------
 # Callback handlers
 # ---------------------------------------------------------------------------
@@ -179,6 +191,40 @@ async def handle_todo_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         sec_idx = int(sec_idx_str)
         await _send(query.message, None, build_section_text(tasks, sec_idx),
                     build_section_keyboard(tasks, date, sec_idx))
+        return
+
+
+async def handle_cleaning_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "cback":
+        await send_cleaning(None, edit_message=query.message)
+        return
+
+    if data == "creset":
+        if os.path.exists(CLEANING_FILE):
+            reset_tasks(CLEANING_FILE)
+        await send_cleaning(None, edit_message=query.message)
+        return
+
+    if data.startswith("csec:"):
+        sec_idx = int(data.split(":")[1])
+        tasks = parse_tasks(CLEANING_FILE)
+        await _send(query.message, None,
+                    build_section_text(tasks, sec_idx),
+                    build_cleaning_section_keyboard(tasks, sec_idx))
+        return
+
+    if data.startswith("ctodo:"):
+        parts = data.split(":")
+        line_idx, sec_idx = int(parts[1]), int(parts[2])
+        toggle_task(CLEANING_FILE, line_idx)
+        tasks = parse_tasks(CLEANING_FILE)
+        await _send(query.message, None,
+                    build_section_text(tasks, sec_idx),
+                    build_cleaning_section_keyboard(tasks, sec_idx))
         return
 
 
@@ -232,6 +278,10 @@ async def cmd_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_notes_categories(update.message)
 
 
+async def cmd_cleaning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_cleaning(update.message)
+
+
 async def cmd_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ok = await trigger_processing()
     if not ok:
@@ -247,6 +297,7 @@ QUERY_TOMORROW = {"что завтра", "завтра", "план на завт
 QUERY_PROCESS  = {"обработать", "запустить", "обнови", "обновить"}
 QUERY_RANDOM   = {"рандом", "случайное", "случайная заметка", "random"}
 QUERY_NOTES    = {"заметки", "notes", "мои заметки"}
+QUERY_CLEANING = {"уборка", "чистота", "cleaning"}
 
 
 async def handle_tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,6 +347,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     normalized = text.strip().lower()
 
+    if normalized in QUERY_CLEANING:
+        await send_cleaning(update.message)
+        return
     if normalized in QUERY_NOTES:
         await send_notes_categories(update.message)
         return
@@ -338,8 +392,10 @@ async def run() -> None:
     app.add_handler(CommandHandler("todo",     cmd_todo))
     app.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
     app.add_handler(CommandHandler("process",  cmd_process))
-    app.add_handler(CallbackQueryHandler(handle_notes_callback, pattern=r"^(ncat|nent|nback)"))
-    app.add_handler(CallbackQueryHandler(handle_todo_callback,  pattern=r"^(todo|sec|back):"))
+    app.add_handler(CommandHandler("cleaning", cmd_cleaning))
+    app.add_handler(CallbackQueryHandler(handle_cleaning_callback, pattern=r"^(csec|ctodo|cback|creset)"))
+    app.add_handler(CallbackQueryHandler(handle_notes_callback,    pattern=r"^(ncat|nent|nback)"))
+    app.add_handler(CallbackQueryHandler(handle_todo_callback,     pattern=r"^(todo|sec|back):"))
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, handle_message))
 
     await app.initialize()
@@ -350,6 +406,7 @@ async def run() -> None:
         ("todo",     "📋 План на сегодня"),
         ("tomorrow", "📅 План на завтра"),
         ("notes",    "📒 Просмотр заметок"),
+        ("cleaning", "🧹 Список уборки"),
         ("process",  "⚙️ Обработать входящие"),
     ])
 
