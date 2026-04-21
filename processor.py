@@ -35,6 +35,7 @@ from telegram.error import TelegramError
 from shared import (
     BASE_DIR, INBOX_FILE, NOTES_DIR, PROCESS_TASK_FILE,
     load_inbox, save_inbox, unprocessed_items,
+    parse_tasks, build_todo_text,
 )
 
 load_dotenv()
@@ -222,6 +223,18 @@ async def run_processing(bot: Bot) -> None:
         await run_claude_processing(bot)
 
 
+async def send_todo_notification(bot: Bot) -> None:
+    """Send today's plan to Telegram."""
+    today = datetime.now().date().isoformat()
+    plan_file = os.path.join(NOTES_DIR, "daily", f"{today}.md")
+    if not os.path.exists(plan_file):
+        await _notify(bot, f"📭 План на {today} ещё не создан.")
+        return
+    tasks = parse_tasks(plan_file)
+    text = build_todo_text(tasks, today)
+    await _notify(bot, text)
+
+
 async def _notify(bot: Bot, text: str) -> None:
     try:
         await bot.send_message(chat_id=ALLOWED_USER_ID, text=text)
@@ -281,10 +294,14 @@ async def run(startup_process: bool = True) -> None:
     engine = "gemini" if USE_GEMINI else "claude"
     logger.info(f"Processing engine: {engine.upper()}")
 
+    async def daily_job() -> None:
+        await run_processing(bot)
+        await send_todo_notification(bot)
+
     # Scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        lambda: asyncio.ensure_future(run_processing(bot)),
+        lambda: asyncio.ensure_future(daily_job()),
         trigger=CronTrigger(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE),
         id="daily_processing",
         replace_existing=True,
